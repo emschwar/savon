@@ -46,11 +46,11 @@ module Savon
     end
 
     attr_accessor :username, :password, :created_at, :expires_at, :signature, :verify_response
-    
+
     def sign_with=(klass)
       @signature = klass
     end
-    
+
     def signature?
       !!@signature
     end
@@ -89,7 +89,7 @@ module Savon
     # Returns the XML for a WSSE header.
     def to_xml
       @other_xml ||= Gyoku.xml(hash)
-      
+
       xml = if signature?
         signature.to_xml
       elsif username_token?
@@ -99,7 +99,7 @@ module Savon
       else
         ""
       end
-      
+
       xml + @other_xml
     end
 

@@ -5,59 +5,64 @@ require 'savon/wsse/canonicalizer'
 module Savon
   class WSSE
     class Signature
-      
+
       class EmptyCanonicalization < RuntimeError; end
       class MissingCertificate < RuntimeError; end
-      
+
       # For a +Savon::WSSE::Certs+ object. To hold the certs we need to sign.
       attr_accessor :certs
-      
+
       # Without a document, the document cannot be signed.
       # Generate the document once, and then set document and recall #to_xml
       attr_accessor :document
-      
+
+      # Should we use UTC timestamps to sign our messages?
+      attr_accessor :use_utc
+
       ExclusiveXMLCanonicalizationAlgorithm = 'http://www.w3.org/2001/10/xml-exc-c14n#'.freeze
       RSASHA1SignatureAlgorithm = 'http://www.w3.org/2000/09/xmldsig#rsa-sha1'.freeze
       SHA1DigestAlgorithm = 'http://www.w3.org/2000/09/xmldsig#sha1'.freeze
-      
+
       X509v3ValueType = 'http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-x509-token-profile-1.0#X509v3'.freeze
       Base64EncodingType = 'http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-soap-message-security-1.0#Base64Binary'.freeze
-      
+
       SignatureNamespace = 'http://www.w3.org/2000/09/xmldsig#'.freeze
-      
-      def initialize(certs = Certs.new)
+
+      def initialize(certs = Certs.new, use_utc=false)
         @certs = certs
+        @use_utc = use_utc
       end
-      
+
       def have_document?
         !!document
       end
 
       # Cache "now" so that digests match...
       # TODO: figure out how we might want to expire this cache...
-      def now
-        @now ||= Time.now
+      def now(clear_cache=false)
+        @now = nil if clear_cache
+        @now ||= @use_utc ? Time.now.utc : Time.now
       end
-      
+
       def timestamp_id
         @timestamp_id ||= "Timestamp-#{uid}".freeze
       end
-      
+
       def body_id
         @body_id ||= "Body-#{uid}".freeze
       end
-      
+
       def security_token_id
         @security_token_id ||= "SecurityToken-#{uid}".freeze
       end
-      
+
       def body_attributes
         {
           "xmlns:wsu" => WSUNamespace,
           "wsu:Id" => body_id,
         }
       end
-      
+
       def to_xml
         security = {}.deep_merge(timestamp).deep_merge(signature)
         security.deep_merge!(binary_security_token) if certs.cert
@@ -75,9 +80,9 @@ module Savon
           } },
         })
       end
-      
+
     private
-    
+
       def binary_security_token
         {
           "wsse:BinarySecurityToken" => Base64.encode64(certs.cert.to_der).gsub("\n", ''),
@@ -89,10 +94,10 @@ module Savon
           } }
         }
       end
-    
+
       def signature
         return {} unless have_document?
-        
+
         sig = signed_info.merge(key_info).merge(signature_value)
         sig.merge! :order! => []
         [ "SignedInfo", "SignatureValue", "KeyInfo" ].each do |key|
@@ -104,7 +109,7 @@ module Savon
           :attributes! => { "Signature" => { "xmlns" => SignatureNamespace } },
         }
       end
-    
+
       def key_info
         {
           "KeyInfo" => {
@@ -119,13 +124,13 @@ module Savon
           },
         }
       end
-      
+
       def signature_value
         { "SignatureValue" => the_signature }
       rescue EmptyCanonicalization, MissingCertificate
         {}
       end
-    
+
       def signed_info
         {
           "SignedInfo" => {
@@ -144,7 +149,7 @@ module Savon
           },
         }
       end
-    
+
       # We're going to generate the timestamp ourselves, since WSSE is hard-
       # coded to generate the timestamp section directly within wsse:Security.
       #
@@ -159,18 +164,18 @@ module Savon
           :attributes! => { "wsu:Timestamp" => { "wsu:Id" => timestamp_id, "xmlns:wsu" => WSUNamespace } },
         }
       end
-      
+
       def the_signature
         raise MissingCertificate, "Expected a private_key for signing" unless certs.private_key
         xml = canonicalize("SignedInfo")
         signature = certs.private_key.sign(OpenSSL::Digest::SHA1.new, xml)
         Base64.encode64(signature).gsub("\n", '') # TODO: DRY calls to Base64.encode64(...).gsub("\n", '')
       end
-      
+
       def timestamp_digest
         xml_digest('wsu:Timestamp')
       end
-      
+
       def body_digest
         xml_digest("soapenv:Body")
       end
@@ -184,15 +189,15 @@ module Savon
       def xml_digest(xml_element)
         Base64.encode64(OpenSSL::Digest::SHA1.digest(canonicalize(xml_element))).strip
       end
-      
+
       def signed_info_digest_method
         { "DigestMethod/" => nil, :attributes! => { "DigestMethod/" => { "Algorithm" => SHA1DigestAlgorithm } } }
       end
-    
+
       def signed_info_transforms
         { "Transforms" => { "Transform/" => nil, :attributes! => { "Transform/" => { "Algorithm" => ExclusiveXMLCanonicalizationAlgorithm } } } }
       end
-      
+
       def uid
         OpenSSL::Digest::SHA1.hexdigest([Time.now, rand].collect(&:to_s).join('/'))
       end
